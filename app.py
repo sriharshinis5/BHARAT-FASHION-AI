@@ -226,25 +226,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- Debug: flag any asset image that failed to load (file missing/misnamed)
-_missing_assets = [k for k, v in ASSETS_B64.items() if not v]
-if _missing_assets:
-    st.warning(
-        "These image files weren't found (check filename, extension, and that "
-        f"they exist in your `assets/` folder): {', '.join(_missing_assets)}"
-    )
-
-
 # --- Header / Banner
 st.markdown("## 🛒 Top Fashion Picks")
 
 products = [
     ("Kurti", "₹899", "assets/kurti.jpg"),
-    ("Dress", "₹1199", "assets/dress.jpg"),
+    ("Dress", "₹1199", "assets/wedding.jpg"),
     ("Jeans", "₹999", "assets/jeans.jpg"),
-    ("Shirt", "₹799", "assets/shirt.jpg"),
-    ("Jacket", "₹1299", "assets/jacket.jpg"),
-    ("Footwear", "₹999", "assets/footwear.jpg")
+    ("Shirt", "₹799", "assets/shirts.jpg"),
+    ("Jacket", "₹1299", "assets/jackets.jpg"),
+    ("Footwear", "₹999", "assets/shoes.jpg")
 ]
 
 cols = st.columns(3)
@@ -364,22 +355,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Sample fashion image gallery
-st.markdown("### Trending now")
-
-gallery = [
-    ("Trending", ASSETS_B64["sale"], "https://www.myntra.com/trending"),
-    ("Ethnic Picks", ASSETS_B64["ethnic"], "https://www.myntra.com/kurti"),
-    ("Western Edit", ASSETS_B64["dress"], "https://www.myntra.com/dresses"),
-]
-
-cards_html = "<div class='card-row'>"
-for title, url, link in gallery:
-    cards_html += f"<a href='{link}' target='_blank' style='text-decoration:none;color:inherit'><div class='card' style=\"background-image:url('{url}')\">"
-    cards_html += f"<div class='overlay'><div class='card-title'>{title}</div><p style='color:#fff;font-size:12px;margin:6px 0 0 0'>Click to explore →</p></div></div></a>"
-cards_html += "</div>"
-
-st.markdown(cards_html, unsafe_allow_html=True)
-
 # --- Features Section with Images
 st.markdown("### Why Choose Bharat Fashion AI?")
 
