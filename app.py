@@ -3,6 +3,7 @@ from urllib.parse import quote_plus
 import requests
 import re
 import os
+import base64
 from pathlib import Path
 
 # Local Assets Mapping
@@ -31,6 +32,46 @@ ASSETS_ABS = {
     for k, v in ASSETS.items()
 }
 
+
+# --- Base64 image embedding helpers -----------------------------------
+# Streamlit Cloud (and most hosts) cannot serve raw filesystem paths to
+# the browser via <img src="..."> in unsafe_allow_html blocks, since the
+# browser has no access to the server's local disk. The fix is to read
+# each image file and embed it directly as a base64 data URI, so the
+# image bytes travel inside the HTML itself.
+
+@st.cache_data(show_spinner=False)
+def get_base64_image(path: str) -> str:
+    """Read an image file from disk and return it as a base64 data URI.
+
+    Returns an empty string (and lets the <img> fail gracefully) if the
+    file can't be found, instead of crashing the whole app.
+    """
+    try:
+        resolved = (Path(__file__).resolve().parent / path).resolve()
+        with open(resolved, "rb") as f:
+            data = f.read()
+        ext = resolved.suffix.lstrip(".").lower()
+        if ext in ("jpg",):
+            ext = "jpeg"
+        if ext not in ("jpeg", "png", "gif", "webp"):
+            ext = "jpeg"  # sensible default
+        encoded = base64.b64encode(data).decode("utf-8")
+        return f"data:image/{ext};base64,{encoded}"
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+
+
+# Pre-encode every known asset once (cached, so this is cheap on reruns)
+ASSETS_B64 = {k: get_base64_image(v) for k, v in ASSETS.items()}
+
+
+def asset_b64(rel_path: str) -> str:
+    """Base64-encode an arbitrary relative asset path (for files not in
+    the ASSETS dict, e.g. the product gallery below)."""
+    return get_base64_image(rel_path)
 
 
 # Try to import recommendation, with fallback
@@ -139,7 +180,7 @@ st.markdown(
         font-size: 32px;
         background: linear-gradient(135deg, #ff6f00 0%, #ff3d00 100%);
         -webkit-background-clip: text;
-        -webkit-text-fill-color: pink with white;
+        -webkit-text-fill-color: transparent;
         background-clip: text;
     }
     .header-content {
@@ -162,24 +203,36 @@ st.markdown(
     .feature-card img:hover { transform: scale(1.05); }
     .spotlight-card img { cursor:pointer; transition: transform 0.3s ease; }
     .spotlight-card img:hover { transform: scale(1.05); }
+
+    /* Force all standard headings/body text to a dark color so they
+       stay visible regardless of the user's light/dark theme setting.
+       Headings inside colored elements (.header-bar, .overlay, etc.)
+       are excluded since those already set their own white text. */
+    h1, h2, h3, h4, h5, h6, p, span, label, .stMarkdown {
+        color: #222 !important;
+    }
+    .header-bar, .header-bar * ,
+    .overlay, .overlay *,
+    .myntra-logo,
+    .card .overlay .card-title,
+    .spotlight-card h3 + p {
+        color: inherit !important;
+    }
+    .header-text h1, .header-text p, .myntra-logo, .card-title {
+        color: white !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Helper function to resolve local asset paths for Streamlit
-
-def asset_path(rel_path: str) -> str:
-    """Return a path usable by Streamlit <img src=...>.
-
-    We convert to an absolute filesystem path to avoid issues when
-    Streamlit's working directory differs.
-    """
-    return str((Path(__file__).resolve().parent / rel_path).resolve())
-
-
-
-
+# --- Debug: flag any asset image that failed to load (file missing/misnamed)
+_missing_assets = [k for k, v in ASSETS_B64.items() if not v]
+if _missing_assets:
+    st.warning(
+        "These image files weren't found (check filename, extension, and that "
+        f"they exist in your `assets/` folder): {', '.join(_missing_assets)}"
+    )
 
 
 # --- Header / Banner
@@ -197,7 +250,7 @@ products = [
 cols = st.columns(3)
 
 for i, (name, price, img_path) in enumerate(products):
-    
+
     with cols[i % 3]:
         st.markdown(f"""
         <div style="
@@ -209,7 +262,7 @@ for i, (name, price, img_path) in enumerate(products):
         text-align:center;
         ">
 
-        <img src="{asset_path(img_path)}" style="width:100%;border-radius:10px;">
+        <img src="{asset_b64(img_path)}" style="width:100%;border-radius:10px;">
 
         <h4>{name}</h4>
 
@@ -243,25 +296,14 @@ st.markdown(
 st.markdown("""
 <div style='border-radius:16px;overflow:hidden;box-shadow: 0 20px 50px rgba(0,0,0,0.15);margin-bottom:24px;height:300px'>
     <a href='https://www.myntra.com/' target='_blank' style='text-decoration:none;display:block;height:100%'>
-        <img src='""" + ASSETS_ABS["hero"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
+        <img src='""" + ASSETS_B64["hero"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
     </a>
 </div>
 """, unsafe_allow_html=True)
 
-# --- Selection Section with Cover Image
-st.markdown("""
-<div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:24px;height:250px;position:relative'>
-    <img src='""" + ASSETS_ABS["app_banner"] + """' style='width:100%;height:100%;object-fit:cover'/>
-    <div style='position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(135deg, rgba(102,126,234,0.7) 0%, rgba(118,75,162,0.7) 100%);display:flex;align-items:center;justify-content:center'>
-        <div style='text-align:center;color:white'>
-            <h2 style='margin:0;font-size:32px;font-weight:800'>Find Your Perfect Style</h2>
-            <p style='margin:8px 0 0 0;font-size:16px;opacity:0.95'>Select occasion & budget to get personalized recommendations</p>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
 # --- Controls
+st.markdown("#### Find Your Perfect Style")
+st.caption("Select occasion & budget to get personalized recommendations")
 col1, col2 = st.columns([2, 1])
 
 with col1:
@@ -288,7 +330,7 @@ st.markdown("""
 <div style='display:flex;gap:12px;margin-top:16px;flex-wrap:wrap'>
     <div style='flex:1;min-width:120px;border-radius:10px;overflow:hidden;box-shadow:0 8px 20px rgba(0,0,0,0.1);background:#f0f0f0'>
         <a href='https://www.myntra.com/jeans' target='_blank' style='text-decoration:none;display:block'>
-            <img src='""" + ASSETS_ABS["casual"] + """' alt='Casual' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
+            <img src='""" + ASSETS_B64["casual"] + """' alt='Casual' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
             <div style='padding:8px;text-align:center;background:#f9f9f9'>
                 <small style='font-weight:700;color:#333'>Casual</small>
             </div>
@@ -296,7 +338,7 @@ st.markdown("""
     </div>
     <div style='flex:1;min-width:120px;border-radius:10px;overflow:hidden;box-shadow:0 8px 20px rgba(0,0,0,0.1);background:#f0f0f0'>
         <a href='https://www.myntra.com/kurti' target='_blank' style='text-decoration:none;display:block'>
-            <img src='""" + ASSETS_ABS["festival"] + """' alt='Festival' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
+            <img src='""" + ASSETS_B64["festival"] + """' alt='Festival' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
             <div style='padding:8px;text-align:center;background:#f9f9f9'>
                 <small style='font-weight:700;color:#333'>Festival</small>
             </div>
@@ -304,7 +346,7 @@ st.markdown("""
     </div>
     <div style='flex:1;min-width:120px;border-radius:10px;overflow:hidden;box-shadow:0 8px 20px rgba(0,0,0,0.1);background:#f0f0f0'>
         <a href='https://www.myntra.com/trousers' target='_blank' style='text-decoration:none;display:block'>
-            <img src='""" + ASSETS_ABS["office"] + """' alt='Office' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
+            <img src='""" + ASSETS_B64["office"] + """' alt='Office' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
             <div style='padding:8px;text-align:center;background:#f9f9f9'>
                 <small style='font-weight:700;color:#333'>Office</small>
             </div>
@@ -312,7 +354,7 @@ st.markdown("""
     </div>
     <div style='flex:1;min-width:120px;border-radius:10px;overflow:hidden;box-shadow:0 8px 20px rgba(0,0,0,0.1);background:#f0f0f0'>
         <a href='https://www.myntra.com/dresses' target='_blank' style='text-decoration:none;display:block'>
-            <img src='""" + ASSETS_ABS["party"] + """' alt='Party' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
+            <img src='""" + ASSETS_B64["party"] + """' alt='Party' style='width:100%;height:120px;object-fit:cover;cursor:pointer;display:block'/>
             <div style='padding:8px;text-align:center;background:#f9f9f9'>
                 <small style='font-weight:700;color:#333'>Party</small>
             </div>
@@ -321,20 +363,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Sample fashion image gallery (attractive, royalty-free images)
+# --- Sample fashion image gallery
 st.markdown("### Trending now")
-st.markdown("""
-<div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:18px;height:200px'>
-    <a href='https://www.myntra.com/trending' target='_blank' style='text-decoration:none;display:block;height:100%'>
-        <img src='""" + ASSETS["sale"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
-    </a>
-</div>
-""", unsafe_allow_html=True)
 
 gallery = [
-    ("Trending", ASSETS["sale"], "https://www.myntra.com/trending"),
-    ("Ethnic Picks", ASSETS["ethnic"], "https://www.myntra.com/kurti"),
-    ("Western Edit", ASSETS["dress"], "https://www.myntra.com/dresses"),
+    ("Trending", ASSETS_B64["sale"], "https://www.myntra.com/trending"),
+    ("Ethnic Picks", ASSETS_B64["ethnic"], "https://www.myntra.com/kurti"),
+    ("Western Edit", ASSETS_B64["dress"], "https://www.myntra.com/dresses"),
 ]
 
 cards_html = "<div class='card-row'>"
@@ -347,13 +382,6 @@ st.markdown(cards_html, unsafe_allow_html=True)
 
 # --- Features Section with Images
 st.markdown("### Why Choose Bharat Fashion AI?")
-st.markdown("""
-<div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:18px;height:200px'>
-    <a href='https://www.myntra.com/women' target='_blank' style='text-decoration:none;display:block;height:100%'>
-        <img src='""" + ASSETS["women"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
-    </a>
-</div>
-""", unsafe_allow_html=True)
 
 features_col1, features_col2, features_col3 = st.columns(3)
 
@@ -361,7 +389,7 @@ with features_col1:
     st.markdown("""
     <div class='feature-card' style='text-align:center;padding:20px;background:#f5f5f5;border-radius:12px'>
         <a href='https://www.myntra.com/women' target='_blank' style='text-decoration:none'>
-            <img src='""" + ASSETS["beauty"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
+            <img src='""" + ASSETS_B64["beauty"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
         </a>
         <h3 style='margin:10px 0;color:#667eea'>Smart AI</h3>
         <p style='font-size:12px;color:#666'>Personalized recommendations based on your style</p>
@@ -372,7 +400,7 @@ with features_col2:
     st.markdown("""
     <div class='feature-card' style='text-align:center;padding:20px;background:#f5f5f5;border-radius:12px'>
         <a href='https://www.myntra.com/offers' target='_blank' style='text-decoration:none'>
-            <img src='""" + ASSETS["men"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
+            <img src='""" + ASSETS_B64["men"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
         </a>
         <h3 style='margin:10px 0;color:#764ba2'>Best Prices</h3>
         <p style='font-size:12px;color:#666'>Find products within your budget instantly</p>
@@ -383,7 +411,7 @@ with features_col3:
     st.markdown("""
     <div class='feature-card' style='text-align:center;padding:20px;background:#f5f5f5;border-radius:12px'>
         <a href='https://www.myntra.com/' target='_blank' style='text-decoration:none'>
-            <img src='""" + ASSETS["kids"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
+            <img src='""" + ASSETS_B64["kids"] + """' style='width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:10px'/>
         </a>
         <h3 style='margin:10px 0;color:#f093fb'>Diverse Style</h3>
         <p style='font-size:12px;color:#666'>Casual, ethnic, party wear & more</p>
@@ -392,19 +420,12 @@ with features_col3:
 
 st.markdown("---")
 st.markdown("### Fashion Spotlight")
-st.markdown("""
-<div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:18px;height:200px'>
-    <a href='https://www.myntra.com/' target='_blank' style='text-decoration:none;display:block;height:100%'>
-        <img src='""" + ASSETS["premium"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
-    </a>
-</div>
-""", unsafe_allow_html=True)
 
 st.markdown("""
 <div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:18px'>
   <div class='spotlight-card' style='flex:1;min-width:280px;border-radius:16px;overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,0.1)'>
     <a href='https://www.myntra.com/trending' target='_blank' style='text-decoration:none;color:inherit'>
-        <img src='""" + ASSETS["sale"] + """' style='width:100%;height:240px;object-fit:cover;cursor:pointer'/>
+        <img src='""" + ASSETS_B64["sale"] + """' style='width:100%;height:240px;object-fit:cover;cursor:pointer'/>
     </a>
     <div style='padding:16px;background:#fff'>
       <h3 style='margin:0 0 8px 0;color:#333'>Trending Now</h3>
@@ -413,7 +434,7 @@ st.markdown("""
   </div>
   <div class='spotlight-card' style='flex:1;min-width:280px;border-radius:16px;overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,0.1)'>
     <a href='https://www.myntra.com/ethnic' target='_blank' style='text-decoration:none;color:inherit'>
-        <img src='""" + ASSETS["festival_banner"] + """' style='width:100%;height:240px;object-fit:cover;cursor:pointer'/>
+        <img src='""" + ASSETS_B64["festival_banner"] + """' style='width:100%;height:240px;object-fit:cover;cursor:pointer'/>
     </a>
     <div style='padding:16px;background:#fff'>
       <h3 style='margin:0 0 8px 0;color:#333'>Festival Ready</h3>
@@ -431,24 +452,15 @@ if st.button("✨ Get Recommendations"):
     )
 
     st.success("Recommendations Generated")
-    
-    st.markdown("""
-    <div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:18px;height:200px'>
-        <a href='https://www.myntra.com/' target='_blank' style='text-decoration:none;display:block;height:100%'>
-            <img src='""" + ASSETS["premium"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
-        </a>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Prepare default images for occasions - Using ASSETS
-    
+
+    # Prepare default images for occasions - Using base64-encoded ASSETS_B64
     default_images = {
-        'Casual': ASSETS['casual'],
-        'Festival': ASSETS['festival'],
-        'Office': ASSETS['office'],
-        'Party': ASSETS['party']
+        'Casual': ASSETS_B64['casual'],
+        'Festival': ASSETS_B64['festival'],
+        'Office': ASSETS_B64['office'],
+        'Party': ASSETS_B64['party']
     }
-    
+
     category_links = {
         'Kurti': 'https://www.myntra.com/kurti',
         'Jeans': 'https://www.myntra.com/jeans',
@@ -467,21 +479,21 @@ if st.button("✨ Get Recommendations"):
 
     st.markdown("### Recommendations")
 
-    # Category to image mapping - Using ASSETS dictionary
+    # Category to image mapping - Using base64-encoded ASSETS_B64
     category_images = {
-        'Kurti': ASSETS['kurti'],
-        'Jeans': ASSETS['casual'],
-        'Tshirt': ASSETS['casual'],
-        'Shirt': ASSETS['men'],
-        'Saree': ASSETS['ethnic'],
-        'Jacket': ASSETS['premium'],
-        'Dress': ASSETS['dress'],
-        'Gown': ASSETS['party'],
-        'Lehenga': ASSETS['festival'],
-        'Sherwani': ASSETS['men'],
-        'Blazer': ASSETS['office'],
-        'Heels': ASSETS['women'],
-        'Winter': ASSETS['casual']
+        'Kurti': ASSETS_B64['kurti'],
+        'Jeans': ASSETS_B64['casual'],
+        'Tshirt': ASSETS_B64['casual'],
+        'Shirt': ASSETS_B64['men'],
+        'Saree': ASSETS_B64['ethnic'],
+        'Jacket': ASSETS_B64['premium'],
+        'Dress': ASSETS_B64['dress'],
+        'Gown': ASSETS_B64['party'],
+        'Lehenga': ASSETS_B64['festival'],
+        'Sherwani': ASSETS_B64['men'],
+        'Blazer': ASSETS_B64['office'],
+        'Heels': ASSETS_B64['women'],
+        'Winter': ASSETS_B64['casual']
     }
 
     # If result is a DataFrame-like with columns, render colorful cards with images
@@ -494,15 +506,13 @@ if st.button("✨ Get Recommendations"):
                 category = row.get('Category', 'Product')
                 price = row.get('Price', '')
                 img_url = category_images.get(category, default_images.get(occasion, list(default_images.values())[0]))
-                # Fallback to occasion image if category image doesn't load
                 if not img_url:
-                    img_url = default_images.get(occasion, ASSETS['dress'])
+                    img_url = default_images.get(occasion, ASSETS_B64['dress'])
                 product_url = occasion_links.get(occasion, category_links.get(category, f"https://www.myntra.com/search?q={quote_plus(str(category))}"))
-                rec_html += f"<a href='{product_url}' target='_blank' style='text-decoration:none;color:inherit'><div class='rec-card'><img src='{img_url}' alt='{category}' style='cursor:pointer' onerror=\"this.src='{ASSETS['dress']}'\"/><div class='rec-card-body'><div style='font-weight:700'>{category}</div><div class='price'>₹{price}</div></div></div></a>"
+                rec_html += f"<a href='{product_url}' target='_blank' style='text-decoration:none;color:inherit'><div class='rec-card'><img src='{img_url}' alt='{category}' style='cursor:pointer'/><div class='rec-card-body'><div style='font-weight:700'>{category}</div><div class='price'>₹{price}</div></div></div></a>"
             rec_html += "</div>"
             st.markdown(rec_html, unsafe_allow_html=True)
         else:
-            # Fallback: show raw result
             st.dataframe(result, use_container_width=True)
     except Exception as e:
         st.error(f"Error displaying recommendations: {e}")
@@ -511,20 +521,13 @@ if st.button("✨ Get Recommendations"):
 # --- Category Gallery Section (Always visible)
 st.markdown("---")
 st.markdown("### Fashion Categories")
-st.markdown("""
-<div style='border-radius:12px;overflow:hidden;box-shadow: 0 15px 40px rgba(0,0,0,0.12);margin-bottom:18px;height:200px'>
-    <a href='https://www.myntra.com/' target='_blank' style='text-decoration:none;display:block;height:100%'>
-        <img src='""" + ASSETS["ethnic"] + """' style='width:100%;height:100%;object-fit:cover;cursor:pointer;transition: transform 0.3s ease' onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'"/>
-    </a>
-</div>
-""", unsafe_allow_html=True)
 
 category_showcase = [
-    ('Women\'s Ethnic', ASSETS["ethnic"], 'https://www.myntra.com/kurti'),
-    ('Men\'s Wear', ASSETS["men"], 'https://www.myntra.com/shirts'),
-    ('Footwear', ASSETS["dress"], 'https://www.myntra.com/footwear'),
-    ('Outerwear', ASSETS["premium"], 'https://www.myntra.com/jackets'),
-    ('Winter Wear', ASSETS["casual"], 'https://www.myntra.com/jackets'),
+    ('Women\'s Ethnic', ASSETS_B64["ethnic"], 'https://www.myntra.com/kurti'),
+    ('Men\'s Wear', ASSETS_B64["men"], 'https://www.myntra.com/shirts'),
+    ('Footwear', ASSETS_B64["footwear"], 'https://www.myntra.com/footwear'),
+    ('Outerwear', ASSETS_B64["premium"], 'https://www.myntra.com/jackets'),
+    ('Winter Wear', ASSETS_B64["casual"], 'https://www.myntra.com/jackets'),
 ]
 
 cols = st.columns(len(category_showcase))
